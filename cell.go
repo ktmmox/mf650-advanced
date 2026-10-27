@@ -1,0 +1,20 @@
+package main
+import("encoding/binary";"errors";"fmt";"net/http";"sync";"time")
+var cellMu sync.Mutex
+var cellLE=binary.LittleEndian
+type CellInfo struct{PCI int `json:"pci"`;EARFCN uint32 `json:"earfcn"`;RSRP float64 `json:"rsrp"`;RSRQ float64 `json:"rsrq"`;Serving bool `json:"serving"`}
+type LTECellLock struct{Known bool `json:"known"`;Cells []CellInfo `json:"cells"`}
+func parseQMIFrame(b []byte,id uint16)(map[byte][]byte,error){
+ if len(b)<7||b[0]!=2||cellLE.Uint16(b[3:])!=id||len(b)!=7+int(cellLE.Uint16(b[5:])){return nil,errors.New("QMI 响应格式错误")};m:=map[byte][]byte{}
+ for at:=7;at<len(b);{if at+3>len(b){return nil,errors.New("QMI 字段截断")};n:=int(cellLE.Uint16(b[at+1:]));if at+3+n>len(b){return nil,errors.New("QMI 字段截断")};if _,ok:=m[b[at]];ok{return nil,errors.New("QMI 字段重复")};m[b[at]]=append([]byte(nil),b[at+3:at+3+n]...);at+=3+n}
+ r:=m[2];if len(r)!=4{return nil,errors.New("QMI 缺少执行结果")};if cellLE.Uint16(r)!=0{return nil,fmt.Errorf("QMI 错误 %d",cellLE.Uint16(r[2:]))};return m,nil
+}
+func parseLTECells(m map[byte][]byte)([]CellInfo,int,uint32,uint32,error){
+ b:=m[0x13];if len(b)<19{return nil,0,0,0,errors.New("本次没有返回 LTE 小区测量")};count:=int(b[18]);if count>64||len(b)!=19+count*10{return nil,0,0,0,errors.New("LTE 测量格式不完整")};channel:=uint32(cellLE.Uint16(b[10:]));if v:=m[0x27];len(v)==4{channel=cellLE.Uint32(v)};serving:=int(cellLE.Uint16(b[12:]));cells:=[]CellInfo{}
+ for i:=0;i<count;i++{v:=b[19+i*10:];pci:=int(cellLE.Uint16(v));if pci>503{return nil,0,0,0,errors.New("LTE PCI 越界")};cells=append(cells,CellInfo{pci,channel,float64(int16(cellLE.Uint16(v[4:])))/10,float64(int16(cellLE.Uint16(v[2:])))/10,pci==serving})}
+ return cells,serving,channel,cellLE.Uint32(b[6:]),nil
+}
+func parseLTELock(m map[byte][]byte)LTECellLock{b:=m[0x10];s:=LTECellLock{Cells:[]CellInfo{}};if len(b)<1||len(b)!=1+int(b[0])*4||b[0]>32{return s};for i:=0;i<int(b[0]);i++{v:=b[1+i*4:];pci:=int(cellLE.Uint16(v));if pci>503{return LTECellLock{}};s.Cells=append(s.Cells,CellInfo{PCI:pci,EARFCN:uint32(cellLE.Uint16(v[2:]))})};s.Known=true;return s}
+func readCellData()(map[string]any,error){m,e:=nasQuery(0x43,nil);if e!=nil{return nil,e};cells,pci,ch,id,e:=parseLTECells(m);if e!=nil{return nil,e};result:=map[string]any{"chip":"Qualcomm SDX55","scan_supported":true,"cells":cells,"serving_pci":pci,"earfcn":ch,"cellid":id,"updated_at":time.Now().Unix(),"scan_note":"读取基带当前 LTE 服务小区及同频邻区测量；不是全频段主动搜网。","nr_note":"当前 NR 锁定查询只返回成功码，没有可校验的状态，暂未启用 5G 锁定。"};lock,e:=nasQuery(0xd7,nil);if e==nil{s:=parseLTELock(lock);result["lte_lock"]=s;result["supported"]=s.Known};if v:=m[0x2e];len(v)==4{result["nr_arfcn"]=cellLE.Uint32(v)};return result,nil}
+func lteLockPayload(pci int,ch uint32,clear bool)([]byte,error){if !clear&&(pci<0||pci>503||ch>65535){return nil,errors.New("LTE PCI 需为 0–503，当前回读协议支持 EARFCN 0–65535")};n:=0;if !clear{n=1};b:=make([]byte,4+6*n+4);b[0]=1;cellLE.PutUint16(b[1:],uint16(1+6*n));b[3]=byte(n);if n==1{cellLE.PutUint16(b[4:],uint16(pci));cellLE.PutUint32(b[6:],ch)};at:=4+6*n;b[at]=0x10;b[at+1]=1;b[at+3]=1;return b,nil}
+func cellAPI(w http.ResponseWriter,r *http.Request){cellMu.Lock();defer cellMu.Unlock();if r.URL.Path=="/api/cell"{if r.Method!="GET"{fail(w,405,"请使用读取按钮");return};d,e:=readCellData();if e!=nil{fail(w,502,"读取小区失败："+e.Error());return};out(w,d);return};if r.Method!="POST"{fail(w,405,"请使用操作按钮");return};var b struct{Network string;PCI int;EARFCN uint32};if body(r,&b)!=nil||b.Network!="lte"{fail(w,400,"当前仅支持 LTE 小区操作");return};clear:=r.URL.Path=="/api/cell/unlock";payload,e:=lteLockPayload(b.PCI,b.EARFCN,clear);if e!=nil{fail(w,400,e.Error());return};m,e:=nasQuery(0xd7,nil);if e!=nil||!parseLTELock(m).Known{fail(w,502,"无法确认当前锁定状态，未发送修改");return};_,e=nasQuery(0xd8,payload);if e!=nil{fail(w,502,"锁定请求未确认："+e.Error()+"。请重新读取状态后再操作。");return};m,e=nasQuery(0xd7,nil);s:=parseLTELock(m);verified:=e==nil&&s.Known;if clear{verified=verified&&len(s.Cells)==0}else{verified=verified&&len(s.Cells)==1&&s.Cells[0].PCI==b.PCI&&s.Cells[0].EARFCN==b.EARFCN};if !verified{fail(w,502,"设备已应答，但回读未确认目标配置。请刷新锁定状态，不要连续重试。");return};out(w,map[string]any{"ok":true,"message":"锁定配置已回读确认；实际驻网请查看实时小区信息。","lte_lock":s})}

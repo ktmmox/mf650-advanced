@@ -1,0 +1,8 @@
+{
+  "airlink-console": "4ebc8d0be0814c5f1fcdcd8075292185908999934d6e3fe6975775b83d4f78d0",
+  "airlink-console.service": "f409b6161b09fd9014bf95a6a8366aaac83b9aefce1b0d4c7d75ca1b1460e40e",
+  "default-index.asp": "c39f2ef49585551d3053c52adde88e00b60c7fe8d8bf671984399f06f9abbda5",
+  "deploy-device.sh": "d898c38275c5c316da1e994793ecb8ec877cc9982c69350cbb60ca1ecd6ceace",
+  "native-httpd.conf": "d8fc8bcae7ab5c4e4d4aedbc761d48c1b570853e0e0e8c4b51236b12980d67f2",
+  "prepare-runtime.ps1": "ab909ffd22d4faf5584f914375b655466251d2e5dc7cd4faed0aeaed763c7f23"
+}

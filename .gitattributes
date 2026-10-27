@@ -1,0 +1,13 @@
+*.go text eol=lf
+*.js text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.md text eol=lf
+*.ps1 -text
+*.sh -text
+*.cmd -text
+*.service -text
+*.conf -text
+*.asp -text
+airlink-console binary
+native/qos-observer binary

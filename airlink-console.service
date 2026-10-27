@@ -1,0 +1,16 @@
+[Unit]
+Description=Airlink Device Console
+After=network.target httpd.service
+
+[Service]
+Type=simple
+ExecStart=/data/airlink/airlink-console
+WorkingDirectory=/data/airlink
+Environment=GOMEMLIMIT=24MiB
+Environment=GOGC=50
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
