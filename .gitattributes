@@ -11,3 +11,5 @@
 *.asp -text
 airlink-console binary
 native/qos-observer binary
+
+*.so binary
